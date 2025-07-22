@@ -102,6 +102,12 @@ def extract_features(closest_row, current_datetime, traffic_conditions, weather_
     advanced_risk = closest_row['Advanced_Risk_Score_Log'] if 'Advanced_Risk_Score_Log' in closest_row else 0
     high_incident_area = closest_row['High_Incident_Area'] if 'High_Incident_Area' in closest_row else 0
 
+    # Encode weather_conditions to match training
+    weather_map = {'Clear': 0, 'Clouds': 1, 'Rain': 2, 'Storm': 3}
+    if isinstance(weather_conditions, str):
+        weather_encoded = weather_map.get(weather_conditions, 0)
+    else:
+        weather_encoded = 0
     features = {
         'sin_Hour': sin_hour,
         'cos_Hour': cos_hour,
@@ -113,7 +119,9 @@ def extract_features(closest_row, current_datetime, traffic_conditions, weather_
         'Advanced_Risk_Score_Log': advanced_risk,
         'High_Incident_Area': high_incident_area,
         'Hour': hour,
-        'Involved_Encoded': involved_encoded
+        'Involved_Encoded': involved_encoded,
+        'Traffic_Conditions': traffic_conditions,
+        'Weather_Conditions': weather_encoded
     }
     debug(f'Extracted features: {features}')
     return pd.DataFrame([features])
@@ -210,11 +218,26 @@ def get_real_time_weather(lat, lon):
 
 # --- Streamlit App ---
 st.title('Roadfie: Geospatial Temporal Risk Analysis (Web App)')
+st.info('Note: This app uses the latest model and features. If you updated the .pkl/.json files, use "Clear Cache" in Streamlit if predictions do not change.')
 
 current_location = st.text_input('Enter your current location')
 destination = st.text_input('Enter your destination')
-date_time = st.date_input('Date', value=datetime.now().date())
-time = st.time_input('Time', value=datetime.now().time())
+
+
+
+
+# Display date and time fields for user visibility (do not use for prediction)
+now = datetime.now()
+date_str = st.text_input('Date', value=now.strftime('%Y/%m/%d'))
+time_str = st.text_input('Time', value=now.strftime('%H:%M'))
+
+# Convert to datetime.date and datetime.time for prediction
+try:
+    date_time = datetime.strptime(date_str, '%Y/%m/%d').date()
+    time = datetime.strptime(time_str, '%H:%M').time()
+except Exception:
+    date_time = now.date()
+    time = now.time()
 
 
 
@@ -226,6 +249,7 @@ if 'prediction' not in st.session_state:
     st.session_state['suggestion'] = None
     st.session_state['map'] = None
     st.session_state['risk_scores'] = None
+
 
 if st.button('Predict Risk'):
     debug('Predict Risk button pressed.')
@@ -255,11 +279,21 @@ if st.button('Predict Risk'):
         debug(f'Closest location row: {closest_location.to_dict()}')
         user_features = extract_features(closest_location, datetime.combine(date_time, time), traffic_conditions, weather_conditions)
         debug(f'User features before imputation: {user_features}')
-        user_features = imputer.transform(user_features)
-        user_features = pd.DataFrame(user_features, columns=expected_features)
-        debug(f'User features after imputation: {user_features}')
+        # Print extracted features for user visibility
+        # Ensure all expected features are present in the DataFrame
+        for col in expected_features:
+            if col not in user_features.columns:
+                user_features[col] = np.nan
+        user_features = user_features[expected_features]
+        st.write('Extracted Features for Prediction:')
+        st.write(user_features)
+        user_features_imputed = imputer.transform(user_features)
+        user_features_df = pd.DataFrame(user_features_imputed, columns=expected_features)
+        debug(f'User features after imputation: {user_features_df}')
+        st.write('Imputed Features for Model:')
+        st.write(user_features_df)
 
-        predicted_score = model.predict(user_features)[0]
+        predicted_score = model.predict(user_features_df)[0]
         debug(f'Predicted score: {predicted_score}')
         context, suggestion = provide_context_and_suggestions(predicted_score, traffic_conditions, weather_conditions, datetime.combine(date_time, time))
         debug(f'Context: {context} | Suggestion: {suggestion}')
@@ -291,7 +325,14 @@ if st.button('Predict Risk'):
 
         plot_df = reference_df.copy()
         debug(f'Plotting histogram with {len(plot_df)} rows.')
-        plot_df['Predicted_Risk_Score'] = model.predict(plot_df[expected_features])
+        # Use current context for all rows for demo purposes
+        def make_features(row):
+            return extract_features(row, datetime.combine(date_time, time), traffic_conditions, weather_conditions)
+        features_list = [make_features(row) for _, row in plot_df.iterrows()]
+        features_df = pd.concat(features_list, ignore_index=True)
+        features_imputed = imputer.transform(features_df)
+        features_imputed_df = pd.DataFrame(features_imputed, columns=expected_features)
+        plot_df['Predicted_Risk_Score'] = model.predict(features_imputed_df)
         fig, ax = plt.subplots()
         ax.hist(plot_df['Predicted_Risk_Score'], bins=30, color='skyblue', edgecolor='black')
         ax.set_xlabel('Predicted Risk Score')
@@ -316,9 +357,17 @@ if st.session_state.get('prediction') is not None:
     st.warning(f"Suggestion: {st.session_state['suggestion']}")
     st_folium(st.session_state['map'], width=700, height=400)
     st.subheader('Distribution of Predicted Risk Scores')
-    # Recreate the histogram plot on each rerun
+    # Recreate the histogram plot on each rerun with updated context features
+    plot_df = reference_df.copy()
+    def make_features(row):
+        return extract_features(row, datetime.combine(date_time, time), st.session_state.get('risk_scores_context_traffic', 20), st.session_state.get('risk_scores_context_weather', 'Clear'))
+    features_list = [make_features(row) for _, row in plot_df.iterrows()]
+    features_df = pd.concat(features_list, ignore_index=True)
+    features_imputed = imputer.transform(features_df)
+    features_imputed_df = pd.DataFrame(features_imputed, columns=expected_features)
+    plot_df['Predicted_Risk_Score'] = model.predict(features_imputed_df)
     fig, ax = plt.subplots()
-    risk_scores = st.session_state['risk_scores']
+    risk_scores = plot_df['Predicted_Risk_Score']
     ax.hist(risk_scores, bins=30, color='skyblue', edgecolor='black')
     ax.set_xlabel('Predicted Risk Score')
     ax.set_ylabel('Frequency')

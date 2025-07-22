@@ -1,1 +1,1 @@
-["sin_Hour", "cos_Hour", "DayOfWeek", "Rush_Hour", "Night_Time", "Severity_Encoded", "Lanes_Blocked_Log", "Advanced_Risk_Score_Log", "High_Incident_Area", "Hour", "Involved_Encoded"]
+["sin_Hour", "cos_Hour", "DayOfWeek", "Rush_Hour", "Night_Time", "Severity_Encoded", "Lanes_Blocked_Log", "Advanced_Risk_Score_Log", "High_Incident_Area", "Hour", "Involved_Encoded", "Traffic_Conditions", "Weather_Conditions"]
